@@ -1,0 +1,45 @@
+stages:
+  - "OpenShift update objects"
+  - "OpenShift image build"
+  - "OpenShift deployment"
+
+
+variables:
+  OPENSHIFT_DOMAIN:            ***
+  OPENSHIFT_MASTER:            https://***
+  OPENSHIFT_PROJECT:           ***
+  OPENSHIFT_BUILD_CONFIG:      grafana
+  OPENSHIFT_DEPLOYMENT_CONFIG: grafana
+  GIT_STRATEGY:                none
+
+
+# ############################
+# defaults
+image: ebits/openshift-client
+
+before_script:
+  - oc login $OPENSHIFT_MASTER --token=$***
+  - oc project $OPENSHIFT_PROJECT
+# ############################
+
+
+process template:
+  stage: "OpenShift update objects"
+  variables:
+    GIT_STRATEGY: fetch
+  script:
+    - 'ls -la'
+    - cat template-all-components.yaml
+    - oc process -f template-all-components.yaml | oc apply -f -
+
+
+start-build:
+  stage: "OpenShift image build"
+  script:
+    - oc start-build --follow --wait $OPENSHIFT_BUILD_CONFIG
+
+
+rollout:
+  stage: "OpenShift deployment"
+  script:
+    - oc rollout latest dc/$OPENSHIFT_DEPLOYMENT_CONFIG

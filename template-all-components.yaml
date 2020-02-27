@@ -1,0 +1,253 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  annotations:
+    description: >-
+      see https://***/frankfurt-webworker/tools/grafana-alpine.
+
+    iconClass: pficon-virtual-machine
+    openshift.io/display-name: grafana
+    openshift.io/documentation-url: 'https://***/frankfurt-webworker/tools/grafana-alpine/blob/master/README.md'
+    openshift.io/long-description: >-
+      
+    openshift.io/provider-display-name: '***'
+    # openshift.io/support-url: 'https://access.redhat.com'
+    tags: 'backend'
+
+
+  name: frankfurt-webworker--tools--grafana-alpine--all-components--template
+  labels:
+    gitlab-group: frankfurt-webworker
+    gitlab-sub-group_1: tools
+    gitlab-project-name: grafana-alpine
+    gitlab-project-id: "17634"
+    app: grafana
+
+
+###################################################
+# labels for all objects
+labels:
+  gitlab-group: frankfurt-webworker
+  gitlab-sub-group_1: tools
+  gitlab-project-name: grafana-alpine
+  gitlab-project-id: "17634"
+  app: grafana
+
+
+parameters:
+  - description: >-
+      this will be used to set names for Objects as well as labels
+    displayName: Application Name
+    name: APP_NAME
+    value: grafana
+    required: true
+  - description: >-
+      this is used for references to image streams
+    displayName: Project Namespace
+    name: NAMESPACE
+    value: ai-team-germany
+    required: true
+  - description: >-
+      a reference to the app source code
+    displayName: Source Code Repo
+    name: SOURCE_CODE_REPOSITORY
+    value: https://***/frankfurt-webworker/tools/grafana-alpine.git
+    required: true
+  - description: >-
+      alpine glibc fix version. required for grafana and cadvisor to run in alpine linux. review https://github.com/sgerrand/alpine-pkg-glibc/releases
+    displayName: glibc version
+    name: GLIBC_VERSION
+    value: "2.30-r0"
+    required: true
+  - description: >-
+      Port you want your service to use
+    displayName: Port
+    name: PORT
+    value: "3000"
+    required: true
+  - description: >-
+      Grafana version. review https://github.com/grafana/grafana/releases
+    displayName: grafana version
+    name: GRAFANA_VERSION
+    value: "6.4.4"
+    required: true
+  - description: >-
+      Size of the Persistent Volumne in GB
+    name: STORAGE_SIZE
+    value: "2"
+    required: true
+  - description: >-
+      cadvisor version. review https://github.com/google/cadvisor/releases
+    displayName: cadvisor version
+    name: CADVISOR_VERSION
+    value: "0.34.0"
+    required: true
+  - description: >-
+      Port you want cadvisor to use
+    displayName: cadvisor Port
+    name: CADVISOR_PORT
+    value: "9090"
+    required: true
+
+
+objects:
+
+
+  - apiVersion: image.openshift.io/v1
+    kind: ImageStream
+    metadata:
+      name: ${APP_NAME}
+
+
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: ${APP_NAME}
+    spec:
+      failedBuildsHistoryLimit: 2
+      output:
+        to:
+          kind: ImageStreamTag
+          name: '${APP_NAME}:${GRAFANA_VERSION}'
+      postCommit: {}
+      resources: {}
+      runPolicy: Serial
+      source:
+        git:
+          uri: ${SOURCE_CODE_REPOSITORY}
+        sourceSecret:
+          name: ***--frankfurt-webworker--tools--${APP_NAME}--deploy-token
+        type: Git
+      strategy:
+        dockerStrategy:
+          dockerfilePath: Dockerfile
+          env:
+            - name: GRAFANA_VERSION
+              value: "${GRAFANA_VERSION}"
+            - name: CADVISOR_VERSION
+              value: "${CADVISOR_VERSION}"
+            - name: GLIBC_VERSION
+              value: "${GLIBC_VERSION}"
+        type: Docker
+      successfulBuildsHistoryLimit: 2
+      triggers: []
+
+
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: ${APP_NAME}-storage
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: ${STORAGE_SIZE}Gi
+
+
+  - apiVersion: apps.openshift.io/v1
+    kind: DeploymentConfig
+    metadata:
+      name: ${APP_NAME}
+    spec:
+      replicas: 1
+      revisionHistoryLimit: 10
+      selector:
+        app: ${APP_NAME}
+        deploymentconfig: ${APP_NAME}
+      strategy:
+        activeDeadlineSeconds: 21600
+        resources: {}
+        rollingParams:
+          intervalSeconds: 1
+          maxSurge: 25%
+          maxUnavailable: 25%
+          timeoutSeconds: 600
+          updatePeriodSeconds: 1
+        type: Recreate
+      template:
+        metadata:
+          annotations:
+            prometheus.io/path: /metrics
+            prometheus.io/port: '9090'
+            prometheus.io/scrape: 'true'
+          labels:
+            app: ${APP_NAME}
+            deploymentconfig: ${APP_NAME}
+        spec:
+          containers:
+            - env:
+                - name: PORT
+                  value: ${PORT}
+              image: >-
+                docker-registry.default.svc:5000/${NAMESPACE}/${APP_NAME}:${GRAFANA_VERSION}
+              imagePullPolicy: Always
+              name: ${APP_NAME}
+              ports:
+                - containerPort: ${{PORT}}
+                  protocol: TCP
+              resources:
+                limits:
+                  cpu: 100m
+                  memory: 256Mi
+                requests:
+                  cpu: 10m
+                  memory: 12Mi
+              terminationMessagePath: /dev/termination-log
+              terminationMessagePolicy: File
+              volumeMounts:
+                - mountPath: /opt/grafana/data
+                  name: ${APP_NAME}-storage
+                - mountPath: /etc/grafana/grafana.ini
+                  name: ${APP_NAME}-config
+                  subPath: grafana.ini
+                  readOnly: true
+          dnsPolicy: ClusterFirst
+          restartPolicy: Always
+          schedulerName: default-scheduler
+          securityContext: {}
+          terminationGracePeriodSeconds: 30
+          volumes:
+            - name: ${APP_NAME}-storage
+              persistentVolumeClaim:
+                claimName: ${APP_NAME}-storage
+            - name: ${APP_NAME}-config
+              secret:
+                defaultMode: 420
+                secretName: ${APP_NAME}-config
+      test: false
+      triggers: []
+
+
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: ${APP_NAME}
+    spec:
+      ports:
+        - name: 443-${PORT}-tcp
+          port: 443
+          protocol: TCP
+          targetPort: ${{PORT}}
+      selector:
+        app: ${APP_NAME}
+        deploymentconfig: ${APP_NAME}
+      sessionAffinity: None
+      type: ClusterIP
+
+
+  - apiVersion: route.openshift.io/v1
+    kind: Route
+    metadata:
+      name: ${APP_NAME}
+    spec:
+      port:
+        targetPort: 443-${PORT}-tcp
+      tls:
+        insecureEdgeTerminationPolicy: Redirect
+        termination: edge
+      to:
+        kind: Service
+        name: ${APP_NAME}
+        weight: 100
+      wildcardPolicy: None
